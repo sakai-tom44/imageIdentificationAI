@@ -1,1 +1,3 @@
 # imageIdentificationAI
+
+写真からオブジェクトを検出し評価を計算するプログラム
