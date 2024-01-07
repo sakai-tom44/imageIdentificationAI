@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <title>AI</title>
+    <link rel="stylesheet" href="./style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"> </script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"> </script>
+</head>
+
+<body>
+    <input type="file" id="uploadImage" />
+    <div id="uploadImageArea"></div>
+    <canvas id="canvas" width="100%"></canvas>
+    <button id="clearSelection" onclick="clearSelection()">選択解除</button>
+    <div id="result"></div>
+    <canvas id="cropped_canvas" width="100%"></canvas>
+</body>
+<script>
+    const canvas = document.querySelector("#canvas");
+    const context = canvas.getContext("2d");
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const uploadImage = document.querySelector('#uploadImage');
+
+        uploadImage.addEventListener('change', () => {
+            const file = uploadImage.files[0];
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const base64Text = event.currentTarget.result;
+                document.querySelector('#uploadImageArea').innerHTML = `<img id="img" src="${base64Text}" />`;
+                analysis();
+            };
+            reader.readAsDataURL(file);
+        });
+    });
+    let predictions;
+    let best;
+    async function analysis() {
+        const img = document.querySelector("#img");
+        console.log(img);
+        const model = await cocoSsd.load();
+        predictions = await model.detect(img);
+        console.log(predictions);
+
+        drawAnalysis();
+    };
+    function detectionsList(detections) {
+        const resultDiv = document.querySelector("#result");
+
+        const existingTable = document.querySelector("table");
+        if (existingTable) {
+            resultDiv.removeChild(existingTable);
+        }
+
+        const table = document.createElement("table");
+        const headerRow = table.insertRow(0);
+
+        const headerCells = ["Class", "total", "Center", "Area"];
+        headerCells.forEach((cellText) => {
+            const th = document.createElement("th");
+            th.textContent = cellText;
+            headerRow.appendChild(th);
+        });
+
+        let maxScore = 0;
+        best = null;
+        detections.forEach((detection, index) => {
+            const row = table.insertRow(index + 1);
+            row.addEventListener('click', () => highlightObject(row, detection));
+            row.addEventListener('click', () => {
+                const selectedRow = document.querySelector('.selected');
+                if (selectedRow) {
+                    selectedRow.classList.remove('selected');
+                }
+                row.classList.add('selected');
+            });
+            const center = centerScore(detection.bbox);
+            const area = areaScore(detection.bbox);
+            const total = totalScore(center, area);
+
+            const classCell = row.insertCell(0);
+            classCell.textContent = detection.class;
+
+            const scoreCell = row.insertCell(1);
+            scoreCell.textContent = total.toFixed(3);
+
+            const centerCell = row.insertCell(2);
+            centerCell.textContent = center.toFixed(3);
+
+            const areaCell = row.insertCell(3);
+            areaCell.textContent = area.toFixed(3);
+
+            console.log(index);
+            if(detection.class == "person" && maxScore < total){
+                maxScore = total;
+                best = (index);
+            }
+        });
+        console.log("best "+best);
+        resultDiv.appendChild(table);
+
+        let selectedRow = null;
+
+        function highlightObject(row, detection) {
+            const canvas = document.querySelector("#canvas");
+            const context = canvas.getContext("2d");
+
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(img, 0, 0, img.width, img.height);
+
+            drawRect(detection, "red", 2);
+
+            if (selectedRow && selectedRow !== row) {
+                selectedRow.style.backgroundColor = "";
+                selectedRow.style.color = "";
+            }
+            row.style.backgroundColor = "#f0f0f0";
+            row.style.color = "red";
+
+            selectedRow = row;
+        }
+    }
+    function centerScore(data){
+        let x1 = data[0]+data[2]/2-canvas.width/2;
+        let y1 = data[1]+data[3]/2-canvas.height/2;
+        let r1 = Math.sqrt(x1*x1+y1*y1);
+        let x2 = canvas.width/2;
+        let y2 = canvas.height/2;
+        let r2 = Math.sqrt(x2*x2+y2*y2);
+        return 1-r1/r2;
+    }
+    function areaScore(data){
+        let a1 = data[2]*data[3];
+        let a2 = canvas.width*canvas.height;
+        return Math.sqrt(a1/a2);
+    }
+    function totalScore(center, area){
+        return (center+area*2)/3;
+    }
+    function drawAnalysis() {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        context.drawImage(img, 0, 0, img.width, img.height);
+        context.font = "10px Arial";
+        for (const p of predictions) {
+            drawRect(p, "green", 1);
+        }
+        detectionsList(predictions);
+        if(best != null){
+            displayCroppedImage(predictions[best]);
+        }
+    }
+    function clearSelection() {
+        if (predictions != null) {
+            drawAnalysis();
+        }
+    }
+    function drawRect(data, color, width) {
+        context.lineWidth = width;
+        context.strokeStyle = color;
+        context.fillStyle = color;
+        context.beginPath();
+        context.rect(...data.bbox);
+        context.stroke();
+        context.fillText(
+            data.class + " " + data.score.toFixed(3),
+            data.bbox[0],
+            data.bbox[1] > 10 ? data.bbox[1] - 5 : 10
+        );
+        const x1 = data.bbox[0] + data.bbox[2] / 2;
+        const y1 = data.bbox[1] + data.bbox[3] / 2;
+        const x2 = canvas.width / 2;
+        const y2 = canvas.height / 2;
+        context.beginPath();
+        context.moveTo(x1, y1);
+        context.lineTo(x2, y2);
+        context.stroke();
+    }
+    function displayCroppedImage(selectedObject) {
+        const croppedCanvas = document.getElementById("cropped_canvas");
+        const croppedContext = croppedCanvas.getContext("2d");
+
+        croppedCanvas.width = img.width;
+        croppedCanvas.height = img.height;
+
+        croppedContext.drawImage(img, 0, 0);
+
+        const imageData = croppedContext.getImageData(0, 0, croppedCanvas.width, croppedCanvas.height);
+        const data = imageData.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const grayscale = data[i] * 0.3 + data[i + 1] * 0.59 + data[i + 2] * 0.11;
+            data[i] = grayscale;
+            data[i + 1] = grayscale;
+            data[i + 2] = grayscale;
+        }
+        croppedContext.putImageData(imageData, 0, 0);
+        const [x, y, width, height] = selectedObject.bbox;
+        croppedContext.drawImage(img, x, y, width, height, x, y, width, height);
+        croppedContext.lineWidth = 1;
+        croppedContext.strokeStyle = "red";
+        croppedContext.beginPath();
+        croppedContext.rect(x, y, width, height);
+        croppedContext.stroke();
+    }
+</script>
+
+</html>
